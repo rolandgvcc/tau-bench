@@ -1,61 +1,63 @@
 # Copyright Sierra
 
 import json
-import random
-from litellm import completion
+
+import os
 from typing import List, Optional, Dict, Any
+from openai import OpenAI
 
 from tau_bench.agents.base import Agent
 from tau_bench.envs.base import Env
 from tau_bench.types import SolveResult, Action, RESPOND_ACTION_NAME
 
+from dotenv import load_dotenv
 
-class FewShotToolCallingAgent(Agent):
+load_dotenv()
+
+
+client = OpenAI(
+    api_key=os.getenv("XAI_API_KEY"),
+    base_url="https://us-west-1.api.x.ai/v1",
+)
+
+
+class ToolCallingAgent(Agent):
     def __init__(
         self,
         tools_info: List[Dict[str, Any]],
         wiki: str,
         model: str,
         provider: str,
-        few_shot_displays: List[str],
         temperature: float = 0.0,
-        num_few_shots: int = 5,
     ):
         self.tools_info = tools_info
         self.wiki = wiki
         self.model = model
         self.provider = provider
-        if len(few_shot_displays) == 0:
-            raise ValueError("Few shot displays are empty")
-        elif len(few_shot_displays) < num_few_shots:
-            raise ValueError(f"Few shot displays are less than num_few_shots requested: {len(few_shot_displays)} < {num_few_shots}")
-        self.few_shot_displays = few_shot_displays
         self.temperature = temperature
-        self.num_few_shots = num_few_shots
+
     def solve(
         self, env: Env, task_index: Optional[int] = None, max_num_steps: int = 30
     ) -> SolveResult:
-        sampled_few_shot_displays = random.sample(self.few_shot_displays, self.num_few_shots)
-        few_shots = "\n\n".join([f"Example {i+1}:\n{display}" for i, display in enumerate(sampled_few_shot_displays)])
         total_cost = 0.0
         env_reset_res = env.reset(task_index=task_index)
         obs = env_reset_res.observation
         info = env_reset_res.info.model_dump()
         reward = 0.0
         messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": f"{self.wiki}\n\n{few_shots}"},
+            {"role": "system", "content": self.wiki},
             {"role": "user", "content": obs},
         ]
         for _ in range(max_num_steps):
-            res = completion(
-                messages=messages,
+            res = client.chat.completions.create(
                 model=self.model,
-                custom_llm_provider=self.provider,
-                tools=self.tools_info,
+                messages=messages,
                 temperature=self.temperature,
+                tools=self.tools_info,
+                tool_choice="auto",
             )
             next_message = res.choices[0].message.model_dump()
-            total_cost += res._hidden_params["response_cost"]
+            total_cost = 0
             action = message_to_action(next_message)
             env_response = env.step(action)
             reward = env_response.reward
@@ -93,7 +95,12 @@ class FewShotToolCallingAgent(Agent):
 def message_to_action(
     message: Dict[str, Any],
 ) -> Action:
-    if "tool_calls" in message and message["tool_calls"] is not None and len(message["tool_calls"]) > 0 and message["tool_calls"][0]["function"] is not None:
+    if (
+        "tool_calls" in message
+        and message["tool_calls"] is not None
+        and len(message["tool_calls"]) > 0
+        and message["tool_calls"][0]["function"] is not None
+    ):
         tool_call = message["tool_calls"][0]
         return Action(
             name=tool_call["function"]["name"],

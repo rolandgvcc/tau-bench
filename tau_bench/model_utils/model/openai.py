@@ -2,12 +2,15 @@ import os
 
 from tau_bench.model_utils.api.datapoint import Datapoint
 from tau_bench.model_utils.model.chat import ChatModel, Message
-from tau_bench.model_utils.model.completion import approx_cost_for_datapoint, approx_prompt_str
+from tau_bench.model_utils.model.completion import (
+    approx_cost_for_datapoint,
+    approx_prompt_str,
+)
 from tau_bench.model_utils.model.general_model import wrap_temperature
 from tau_bench.model_utils.model.utils import approx_num_tokens
 
-DEFAULT_OPENAI_MODEL = "gpt-4o-2024-08-06"
-API_KEY_ENV_VAR = "OPENAI_API_KEY"
+DEFAULT_OPENAI_MODEL = "grok-3-mini-beta"
+
 
 PRICE_PER_INPUT_TOKEN_MAP = {
     "gpt-4o-2024-08-06": 2.5 / 1000000,
@@ -46,17 +49,7 @@ LATENCY_MS_PER_OUTPUT_TOKEN_MAP = {}
 LATENCY_MS_PER_OUTPUT_TOKEN_FALLBACK = 0.0
 
 MAX_CONTEXT_LENGTH_MAP = {
-    "gpt-4o-2024-08-06": 128000,
-    "gpt-4o": 128000,
-    "gpt-4o-2024-08-06": 128000,
-    "gpt-4o-2024-05-13": 128000,
-    "gpt-4-turbo": 128000,
-    "gpt-4-turbo-2024-04-09": 128000,
-    "gpt-4": 8192,
-    "gpt-4o-mini": 128000,
-    "gpt-4o-mini-2024-07-18": 128000,
-    "gpt-3.5-turbo": 16385,
-    "gpt-3.5-turbo-0125": 16385,
+    "grok-3-mini-beta": 128000,
 }
 MAX_CONTEXT_LENGTH_FALLBACK = 128000
 
@@ -77,10 +70,10 @@ class OpenAIModel(ChatModel):
 
         api_key = None
         if api_key is None:
-            api_key = os.getenv(API_KEY_ENV_VAR)
+            api_key = os.getenv("XAI_API_KEY")
             if api_key is None:
-                raise ValueError(f"{API_KEY_ENV_VAR} environment variable is not set")
-        self.client = OpenAI(api_key=api_key)
+                raise ValueError("XAI_API_KEY environment variable is not set")
+        self.client = OpenAI(api_key=api_key, base_url="https://us-west-1.api.x.ai/v1")
         self.async_client = AsyncOpenAI(api_key=api_key)
         self.temperature = temperature
 
@@ -104,14 +97,18 @@ class OpenAIModel(ChatModel):
         )
 
     def get_approx_cost(self, dp: Datapoint) -> float:
-        cost_per_token = PRICE_PER_INPUT_TOKEN_MAP.get(self.model, INPUT_PRICE_PER_TOKEN_FALLBACK)
+        cost_per_token = PRICE_PER_INPUT_TOKEN_MAP.get(
+            self.model, INPUT_PRICE_PER_TOKEN_FALLBACK
+        )
         return approx_cost_for_datapoint(dp=dp, price_per_input_token=cost_per_token)
 
     def get_latency(self, dp: Datapoint) -> float:
         latency_per_output_token = LATENCY_MS_PER_OUTPUT_TOKEN_MAP.get(
             self.model, LATENCY_MS_PER_OUTPUT_TOKEN_FALLBACK
         )
-        return approx_cost_for_datapoint(dp=dp, price_per_input_token=latency_per_output_token)
+        return approx_cost_for_datapoint(
+            dp=dp, price_per_input_token=latency_per_output_token
+        )
 
     def get_capability(self) -> float:
         return CAPABILITY_SCORE_MAP.get(self.model, CAPABILITY_SCORE_FALLBACK)

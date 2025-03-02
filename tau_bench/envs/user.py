@@ -2,9 +2,20 @@
 
 import abc
 import enum
-from litellm import completion
 
+import os
 from typing import Optional, List, Dict, Any, Union
+from openai import OpenAI
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+client = OpenAI(
+    api_key=os.getenv("XAI_API_KEY"),
+    base_url="https://us-west-1.api.x.ai/v1",
+)
 
 
 class BaseUserSimulationEnv(abc.ABC):
@@ -44,12 +55,14 @@ class LLMUserSimulationEnv(BaseUserSimulationEnv):
         self.reset()
 
     def generate_next_message(self, messages: List[Dict[str, Any]]) -> str:
-        res = completion(
-            model=self.model, custom_llm_provider=self.provider, messages=messages
+        res = client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=0.0,
         )
         message = res.choices[0].message
         self.messages.append(message.model_dump())
-        self.total_cost = res._hidden_params["response_cost"]
+        self.total_cost = 0
         return message.content
 
     def build_system_prompt(self, instruction: Optional[str]) -> str:
@@ -115,12 +128,14 @@ User Response:
 <the user response (this will be parsed and sent to the agent)>"""
 
     def generate_next_message(self, messages: List[Dict[str, Any]]) -> str:
-        res = completion(
-            model=self.model, custom_llm_provider=self.provider, messages=messages
+        res = client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=0.0,
         )
         message = res.choices[0].message
         self.messages.append(message.model_dump())
-        self.total_cost = res._hidden_params["response_cost"]
+        self.total_cost = 0
         return self.parse_response(message.content)
 
     def reset(self, instruction: Optional[str] = None) -> str:
@@ -164,11 +179,13 @@ class VerifyUserSimulationEnv(LLMUserSimulationEnv):
         attempts = 0
         cur_message = None
         while attempts < self.max_attempts:
-            res = completion(
-                model=self.model, custom_llm_provider=self.provider, messages=messages
+            res = client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=0.0,
             )
             cur_message = res.choices[0].message
-            self.total_cost = res._hidden_params["response_cost"]
+            self.total_cost = 0
             if verify(self.model, self.provider, cur_message, messages):
                 self.messages.append(cur_message.model_dump())
                 return cur_message.content
