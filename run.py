@@ -1,84 +1,103 @@
 # Copyright Sierra
 
+import os
+import json
+import random
 import argparse
-from tau_bench.types import RunConfig
-from tau_bench.run import run
-from litellm import provider_list
+from typing import List
+from datetime import datetime
+from math import comb
+
+from tau_bench.envs import get_env
+from tau_bench.agents.tool_calling_agent import ToolCallingAgent
+from tau_bench.types import EnvRunResult, RunConfig
 from tau_bench.envs.user import UserStrategy
+from concurrent.futures import ThreadPoolExecutor
+
+
+def display_metrics(results: List[EnvRunResult]) -> None:
+    def is_successful(reward: float) -> bool:
+        return (1 - 1e-6) <= reward <= (1 + 1e-6)
+
+    num_trials = len(set([r.trial for r in results]))
+    rewards = [r.reward for r in results]
+    avg_reward = sum(rewards) / len(rewards)
+    # c from https://arxiv.org/pdf/2406.12045
+    c_per_task_id: dict[int, int] = {}
+    for result in results:
+        if result.task_id not in c_per_task_id:
+            c_per_task_id[result.task_id] = 1 if is_successful(result.reward) else 0
+        else:
+            c_per_task_id[result.task_id] += 1 if is_successful(result.reward) else 0
+    pass_hat_ks: dict[int, float] = {}
+    for k in range(1, num_trials + 1):
+        sum_task_pass_hat_k = 0
+        for c in c_per_task_id.values():
+            sum_task_pass_hat_k += comb(c, k) / comb(num_trials, k)
+        pass_hat_ks[k] = sum_task_pass_hat_k / len(c_per_task_id)
+    print(f"🏆 Average reward: {avg_reward}")
+    print("📈 Pass^k")
+    for k, pass_hat_k in pass_hat_ks.items():
+        print(f"  k={k}: {pass_hat_k}")
 
 
 def parse_args() -> RunConfig:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--num-trials", type=int, default=1)
+    parser = argparse.ArgumentParser(description="Run script for Grok agent")
     parser.add_argument(
-        "--env", type=str, choices=["retail", "airline"], default="retail"
+        "--num-trials", type=int, default=1, help="Number of trials to run"
     )
     parser.add_argument(
-        "--model",
+        "--env",
         type=str,
-        help="The model to use for the agent",
+        choices=["retail", "airline"],
+        default="retail",
+        help="Environment to run",
     )
+    parser.add_argument("--model", type=str, default="grok-3-mini-beta", help="Grok model name")
     parser.add_argument(
-        "--model-provider",
-        type=str,
-        choices=provider_list,
-        help="The model provider for the agent",
-    )
-    parser.add_argument(
-        "--user-model",
-        type=str,
-        default="gpt-4o",
-        help="The model to use for the user simulator",
-    )
-    parser.add_argument(
-        "--user-model-provider",
-        type=str,
-        choices=provider_list,
-        help="The model provider for the user simulator",
-    )
-    parser.add_argument(
-        "--agent-strategy",
-        type=str,
-        default="tool-calling",
-        choices=["tool-calling", "act", "react", "few-shot"],
-    )
-    parser.add_argument(
-        "--temperature",
-        type=float,
-        default=0.0,
-        help="The sampling temperature for the action model",
+        "--temperature", type=float, default=0.1, help="Sampling temperature"
     )
     parser.add_argument(
         "--task-split",
         type=str,
         default="test",
         choices=["train", "test", "dev"],
-        help="The split of tasks to run (only applies to the retail domain for now",
+        help="Task split",
     )
-    parser.add_argument("--start-index", type=int, default=0)
-    parser.add_argument("--end-index", type=int, default=-1, help="Run all tasks if -1")
-    parser.add_argument("--task-ids", type=int, nargs="+", help="(Optional) run only the tasks with the given IDs")
-    parser.add_argument("--log-dir", type=str, default="results")
     parser.add_argument(
-        "--max-concurrency",
-        type=int,
-        default=1,
-        help="Number of tasks to run in parallel",
+        "--start-index", type=int, default=0, help="Starting task index"
     )
-    parser.add_argument("--seed", type=int, default=10)
-    parser.add_argument("--shuffle", type=int, default=0)
-    parser.add_argument("--user-strategy", type=str, default="llm", choices=[item.value for item in UserStrategy])
-    parser.add_argument("--few-shot-displays-path", type=str, help="Path to a jsonlines file containing few shot displays")
+    parser.add_argument(
+        "--end-index", type=int, default=-1, help="Ending task index (-1 for all tasks)"
+    )
+    parser.add_argument(
+        "--task-ids", type=int, nargs="+", help="Specific task IDs to run"
+    )
+    parser.add_argument(
+        "--log-dir", type=str, default="results", help="Directory for logs"
+    )
+    parser.add_argument(
+        "--max-concurrency", type=int, default=16, help="Number of parallel tasks"
+    )
+    parser.add_argument("--seed", type=int, default=10, help="Random seed")
+    parser.add_argument("--shuffle", type=int, default=0, help="Shuffle tasks (0 or 1)")
+    parser.add_argument(
+        "--user-strategy",
+        type=str,
+        default="llm",
+        choices=[item.value for item in UserStrategy],
+        help="User strategy",
+    )
+
     args = parser.parse_args()
-    print(args)
     return RunConfig(
-        model_provider=args.model_provider,
-        user_model_provider=args.user_model_provider,
+        model_provider="openai",
+        user_model_provider="openai",
         model=args.model,
-        user_model=args.user_model,
+        user_model=args.model,
         num_trials=args.num_trials,
         env=args.env,
-        agent_strategy=args.agent_strategy,
+        agent_strategy="tool-calling",  # Fixed to use Grok's tool-calling
         temperature=args.temperature,
         task_split=args.task_split,
         start_index=args.start_index,
@@ -89,8 +108,83 @@ def parse_args() -> RunConfig:
         seed=args.seed,
         shuffle=args.shuffle,
         user_strategy=args.user_strategy,
-        few_shot_displays_path=args.few_shot_displays_path,
+        few_shot_displays_path=None,  # Not needed for Grok
     )
+
+
+def run(config: RunConfig) -> List[EnvRunResult]:
+    random.seed(config.seed)
+    time_str = datetime.now().strftime("%m%d%H%M%S")
+    ckpt_path = f"{config.log_dir}/{config.model}-{config.temperature}_range_{config.start_index}-{config.end_index}_{time_str}.json"
+    if not os.path.exists(config.log_dir):
+        os.makedirs(config.log_dir)
+
+    env = get_env(
+        config.env,
+        user_strategy=config.user_strategy,
+        user_model=config.user_model,
+        user_provider=config.user_model_provider,
+        task_split=config.task_split,
+    )
+
+    agent = ToolCallingAgent(
+        tools_info=env.tools_info,
+        wiki=env.wiki,
+        model=config.model,
+        provider=config.model_provider,
+        temperature=config.temperature,
+    )
+
+    end_index = (
+        len(env.tasks)
+        if config.end_index == -1
+        else min(config.end_index, len(env.tasks))
+    )
+    results: List[EnvRunResult] = []
+
+    idxs = (
+        config.task_ids
+        if config.task_ids and len(config.task_ids) > 0
+        else list(range(config.start_index, end_index))
+    )
+    if config.shuffle:
+        random.shuffle(idxs)
+
+    def _run(idx: int) -> EnvRunResult:
+        isolated_env = get_env(
+            config.env,
+            user_strategy=config.user_strategy,
+            user_model=config.user_model,
+            task_split=config.task_split,
+            user_provider=config.user_model_provider,
+            task_index=idx,
+        )
+
+        print(f"Running task {idx}")
+        res = agent.solve(env=isolated_env, task_index=idx)
+        result = EnvRunResult(
+            task_id=idx,
+            reward=res.reward,
+            info=res.info,
+            traj=res.messages,
+            trial=0,
+        )
+        print("✅" if result.reward == 1 else "❌", f"task_id={idx}", result.info)
+        return result
+
+    for i in range(config.num_trials):
+        with ThreadPoolExecutor(max_workers=config.max_concurrency) as executor:
+            trial_results = list(executor.map(_run, idxs))
+            results.extend(trial_results)
+
+    # Add this line to display metrics
+    display_metrics(results)
+
+    with open(ckpt_path, "w") as f:
+        json.dump([result.model_dump() for result in results], f, indent=2)
+        print(f"\n📄 Results saved to {ckpt_path}\n")
+
+    return results
 
 
 def main():

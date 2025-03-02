@@ -2,6 +2,7 @@
 
 import json
 import argparse
+import os
 from enum import Enum
 from pydantic import BaseModel
 from tau_bench.model_utils import default_api_from_args, API
@@ -11,9 +12,8 @@ from tau_bench.model_utils.args import api_parser
 from tau_bench.types import Task, Action
 from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
-from dotenv import load_dotenv
-
-load_dotenv()
+from math import comb
+import glob
 
 
 def get_args() -> argparse.Namespace:
@@ -29,11 +29,13 @@ def get_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-concurrency",
         type=int,
-        default=1,
+        default=16,
         help="Maximum number of concurrent API calls",
     )
     parser.add_argument(
-        "--output-path", type=str, required=True, help="Path to the output file"
+        "--output-path",
+        type=str,
+        help="Path to the output file",
     )
     parser.add_argument(
         "--max-num-failed-results",
@@ -41,7 +43,32 @@ def get_args() -> argparse.Namespace:
         type=int,
         help="Maximum number of failed results to analyze",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    # Automatically detect the latest file in /results based on timestamp in filename if results_path is not provided
+    if not args.results_path:
+        results_dir = "./results"
+        json_files = [f for f in os.listdir(results_dir) if f.endswith(".json")]
+        if not json_files:
+            raise ValueError("No JSON files found in /results directory")
+        # Assume timestamp is numeric part before .json, extract and sort
+        files_with_timestamps = []
+        for filename in json_files:
+            try:
+                # Extract numeric timestamp from filename (e.g., split by _ or other delimiter)
+                timestamp_str = filename.split(".json")[0].split("_")[-1]
+                timestamp = int(timestamp_str)  # Convert to int for comparison
+                files_with_timestamps.append((timestamp, filename))
+            except (ValueError, IndexError):
+                continue  # Skip files that don't match the expected format
+        if not files_with_timestamps:
+            raise ValueError("No files with valid timestamp format found in /results")
+        latest_file = max(files_with_timestamps, key=lambda x: x[0])[1]
+        args.results_path = os.path.join(results_dir, latest_file)
+        print(f"Automatically selected results file: {args.results_path}")
+    # Set output_path based on results_path if not provided
+    if args.output_path is None:
+        args.output_path = f"analysis/{os.path.basename(args.results_path)}"
+    return args
 
 
 class OriginalResult(BaseModel):
@@ -292,6 +319,35 @@ def fault_type_analysis(
     return results
 
 
+def compute_metrics(results: List[Dict[str, Any]], num_trials: int) -> Dict[str, Any]:
+    def is_successful(reward: float) -> bool:
+        return (1 - 1e-6) <= reward <= (1 + 1e-6)
+
+    rewards = [r["reward"] for r in results]
+    avg_reward = sum(rewards) / len(rewards) if rewards else 0.0
+
+    c_per_task_id: dict[int, int] = {}
+    for result in results:
+        task_id = result["task_id"]
+        if task_id not in c_per_task_id:
+            c_per_task_id[task_id] = 1 if is_successful(result["reward"]) else 0
+        else:
+            c_per_task_id[task_id] += 1 if is_successful(result["reward"]) else 0
+
+    pass_hat_ks: dict[int, float] = {}
+    for k in range(1, num_trials + 1):
+        sum_task_pass_hat_k = 0
+        for c in c_per_task_id.values():
+            sum_task_pass_hat_k += (
+                comb(c, k) / comb(num_trials, k) if comb(num_trials, k) > 0 else 0
+            )
+        pass_hat_ks[k] = (
+            sum_task_pass_hat_k / len(c_per_task_id) if c_per_task_id else 0.0
+        )
+
+    return {"average_reward": avg_reward, "pass_hat_ks": pass_hat_ks}
+
+
 def main() -> None:
     args = get_args()
     api = default_api_from_args(args)
@@ -331,6 +387,7 @@ def main() -> None:
     print(
         f"Performing fault assignment analysis on {len(original_results)} failed trajectories with a max concurrency of {args.max_concurrency}..."
     )
+
     fault_assignment_results = fault_assignment_analysis(
         api=api, results=original_results, max_concurrency=args.max_concurrency
     )
@@ -360,6 +417,9 @@ Fault type distribution (only failures marked as being caused by the agent):
   - Other: {sum(1 for r in fault_type_results if r.fault_type == FaultType.OTHER)} ({round(sum(1 for r in fault_type_results if r.fault_type == FaultType.OTHER) / len(fault_type_results) * 100, 2)}%)
 """
     )
+    os.makedirs(os.path.dirname(args.output_path), exist_ok=True)
+    # Compute metrics for all results
+    overall_metrics = compute_metrics(results, len(results))
     with open(args.output_path, "w") as f:
         json.dump(
             {
@@ -367,6 +427,7 @@ Fault type distribution (only failures marked as being caused by the agent):
                     r.model_dump() for r in fault_assignment_results
                 ],
                 "fault_type_analysis": [r.model_dump() for r in fault_type_results],
+                "overall_metrics": overall_metrics,
             },
             f,
             indent=4,

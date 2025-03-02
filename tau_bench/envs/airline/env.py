@@ -13,7 +13,7 @@ class MockAirlineDomainEnv(Env):
     def __init__(
         self,
         user_strategy: Union[str, UserStrategy] = UserStrategy.LLM,
-        user_model: str = "gpt-4o",
+        user_model: str = "grok-3-mini-beta",
         user_provider: Optional[str] = None,
         task_split: str = "test",
         task_index: Optional[int] = None,

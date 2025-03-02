@@ -8,13 +8,14 @@ from typing import Optional, List, Dict, Any, Union
 from openai import OpenAI
 
 from dotenv import load_dotenv
+from tau_bench.constants import DEFAULT_BASE_URL
 
 load_dotenv()
 
 
 client = OpenAI(
     api_key=os.getenv("XAI_API_KEY"),
-    base_url="https://us-west-1.api.x.ai/v1",
+    base_url=DEFAULT_BASE_URL,
 )
 
 
@@ -241,9 +242,8 @@ Your answer will be parsed, so do not include any other text than the classifica
 -----
 
 Classification:"""
-    res = completion(
+    res = client.chat.completions.create(
         model=model,
-        custom_llm_provider=provider,
         messages=[{"role": "user", "content": prompt}],
     )
     return "true" in res.choices[0].message.content.lower()
@@ -275,9 +275,8 @@ Reflection:
 
 Response:
 <the response (this will be parsed and sent to the agent)>"""
-    res = completion(
+    res = client.chat.completions.create(
         model=model,
-        custom_llm_provider=provider,
         messages=[{"role": "user", "content": prompt}],
     )
     _, response = res.choices[0].message.content.split("Response:")
@@ -336,7 +335,7 @@ class UserStrategy(enum.Enum):
 
 def load_user(
     user_strategy: Union[str, UserStrategy],
-    model: Optional[str] = "gpt-4o",
+    model: Optional[str] = "grok-3-mini-beta",
     provider: Optional[str] = None,
 ) -> BaseUserSimulationEnv:
     if isinstance(user_strategy, str):

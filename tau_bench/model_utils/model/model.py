@@ -20,30 +20,11 @@ T = TypeVar("T", bound=BaseModel)
 
 class Platform(enum.Enum):
     OPENAI = "openai"
-    MISTRAL = "mistral"
-    ANTHROPIC = "anthropic"
-    ANYSCALE = "anyscale"
-    OUTLINES = "outlines"
-    VLLM_CHAT = "vllm-chat"
-    VLLM_COMPLETION = "vllm-completion"
 
 
 # @runtime_checkable
 # class Model(Protocol):
 class Model(abc.ABC):
-    @abc.abstractmethod
-    def get_capability(self) -> float:
-        """Return the capability of the model, a float between 0.0 and 1.0."""
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def get_approx_cost(self, dp: Datapoint) -> float:
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def get_latency(self, dp: Datapoint) -> float:
-        raise NotImplementedError
-
     @abc.abstractmethod
     def supports_dp(self, dp: Datapoint) -> bool:
         raise NotImplementedError
@@ -126,5 +107,10 @@ class ScoreModel(Model):
 
 
 AnyModel = (
-    BinaryClassifyModel | ClassifyModel | ParseForceModel | GenerateModel | ParseModel | ScoreModel
+    BinaryClassifyModel
+    | ClassifyModel
+    | ParseForceModel
+    | GenerateModel
+    | ParseModel
+    | ScoreModel
 )

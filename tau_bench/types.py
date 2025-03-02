@@ -73,7 +73,7 @@ class RunConfig(BaseModel):
     model_provider: str
     user_model_provider: str
     model: str
-    user_model: str = "gpt-4o"
+    user_model: str = "grok-3-mini-beta"
     num_trials: int = 1
     env: str = "retail"
     agent_strategy: str = "tool-calling"

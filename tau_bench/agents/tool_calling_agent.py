@@ -9,7 +9,7 @@ from openai import OpenAI
 from tau_bench.agents.base import Agent
 from tau_bench.envs.base import Env
 from tau_bench.types import SolveResult, Action, RESPOND_ACTION_NAME
-
+from tau_bench.constants import DEFAULT_BASE_URL
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,7 +17,7 @@ load_dotenv()
 
 client = OpenAI(
     api_key=os.getenv("XAI_API_KEY"),
-    base_url="https://us-west-1.api.x.ai/v1",
+    base_url=DEFAULT_BASE_URL,
 )
 
 
